@@ -83,12 +83,13 @@ class Bridge implements BridgeActions {
 
   health(): Record<string, unknown> {
     const runners = [...this.runners.values()];
+    const today = localDate(Date.now());
 
     return {
       listeners: runners.length,
       connected: runners.filter((runner) => runner.listener.deviceKey !== null && !runner.listener.signedOut).length,
       last_sync_ok: runners.every((runner) => runner.lastSyncOk !== false),
-      waiting: runners.reduce((sum, runner) => sum + Object.values(runner.listener.books).filter(isWaiting).length, 0),
+      waiting: runners.reduce((sum, runner) => sum + Object.values(runner.listener.books).filter((entry) => isWaiting(entry, today)).length, 0),
     };
   }
 
@@ -197,7 +198,7 @@ function bookView(document: string, entry: BookState, today: string): BookView {
     secondsToday: secondsOn(entry, today),
     percent: entry.lastFraction === null ? null : Math.round(entry.lastFraction * PERCENT),
     finished: entry.finishedSent || entry.finishPending,
-    waiting: isWaiting(entry),
+    waiting: isWaiting(entry, today),
     lastSentAt: entry.lastSentAt,
   };
 }

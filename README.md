@@ -34,6 +34,7 @@ That is all. There is no file to edit and no token to copy. It starts by itself 
 | Listening time | Counted on the day you listened |
 | Your place | The book shows as currently reading, at the right spot |
 | Finished | The book is marked finished the day you finish it |
+| Listening again | After about three minutes of listening, a book you finished starts a new read, and those minutes count towards it |
 
 It sends the book's title, author, ISBN and ASIN so Seekquel can find the right book. Your Audiobookshelf password is used once to sign in and is not kept. The sign-in it gets back stays in this program and is never sent to Seekquel.
 

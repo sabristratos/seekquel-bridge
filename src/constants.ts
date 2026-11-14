@@ -1,5 +1,5 @@
 export const APP_NAME = 'Seekquel Bridge';
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = '0.1.1';
 export const DEVICE_IDENTIFIER = 'seekquel-bridge';
 
 export const DEFAULT_SEEKQUEL_API_URL = 'https://api.seekquel.app/reading';
@@ -32,3 +32,4 @@ export const MAX_TEXT_LENGTH = 500;
 export const MAX_ERRORS_KEPT = 20;
 
 export const MIN_FRACTION_DELTA = 0.0001;
+export const READING_AFTER_SECONDS = 180;

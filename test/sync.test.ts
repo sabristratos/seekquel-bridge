@@ -79,14 +79,21 @@ function fetcher(scene: World): typeof fetch {
   };
 }
 
-function syncer(scene: World): Syncer {
+function syncer(scene: World, now = AFTER_PAIRING): Syncer {
   const fetch = fetcher(scene);
 
   return new Syncer(
     new AudiobookshelfSource({ url: ABS_URL, token: 'abs-token', refreshToken: null }, [], fetch, async () => undefined),
     new SeekquelClient(SEEKQUEL_URL, fetch),
-    () => AFTER_PAIRING,
+    () => now,
   );
+}
+
+const STATUS_PATH = `/documents/${encodeURIComponent(DOCUMENT)}/status`;
+const NEXT_DAY = AFTER_PAIRING + 86_400_000;
+
+function calls(scene: World): string[] {
+  return scene.sent.map((call) => `${call.method} ${call.path}`);
 }
 
 function paired(): Listener {
@@ -109,10 +116,7 @@ test('a book listened to after pairing sends its place and the day total once', 
 
   const report = await syncer(scene).run(state);
 
-  assert.deepEqual(
-    scene.sent.map((call) => `${call.method} ${call.path}`),
-    ['PUT /progress', 'POST /sessions'],
-  );
+  assert.deepEqual(calls(scene), ['PUT /progress', `PUT ${STATUS_PATH}`, 'POST /sessions']);
   assert.deepEqual(scene.sent[0]?.body.metadata, {
     title: 'The Listened Book',
     authors: 'A. Writer',
@@ -121,8 +125,9 @@ test('a book listened to after pairing sends its place and the day total once', 
     duration_seconds: 36000,
   });
   assert.equal(scene.sent[0]?.body.percentage, 0.25);
-  assert.deepEqual(scene.sent[1]?.body, { document: DOCUMENT, days: [{ date: TODAY, seconds: 900 }] });
-  assert.deepEqual(report, { placesSent: 1, daysSent: 1, finishesSent: 0 });
+  assert.deepEqual(scene.sent[1]?.body, { status: 'reading' });
+  assert.deepEqual(scene.sent[2]?.body, { document: DOCUMENT, days: [{ date: TODAY, seconds: 900 }] });
+  assert.deepEqual(report, { placesSent: 1, readingSent: 1, daysSent: 1, finishesSent: 0 });
 
   scene.sent = [];
   await syncer(scene).run(state);
@@ -139,17 +144,70 @@ test('time for a book Seekquel has not placed is kept and sent again later', asy
 
   await syncer(scene).run(state);
 
-  assert.deepEqual(Object.values(state.books).filter(isWaiting).map((entry) => entry.book?.title), ['The Listened Book']);
+  const waiting = (): string[] => Object.values(state.books).filter((entry) => isWaiting(entry, TODAY)).map((entry) => entry.book?.title ?? '');
+
+  assert.deepEqual(waiting(), ['The Listened Book']);
 
   scene.seekquelStatus = 200;
   scene.sent = [];
   await syncer(scene).run(state);
 
-  assert.deepEqual(
-    scene.sent.map((call) => `${call.method} ${call.path}`),
-    ['POST /sessions'],
-  );
-  assert.deepEqual(Object.values(state.books).filter(isWaiting), []);
+  assert.deepEqual(calls(scene), [`PUT ${STATUS_PATH}`, 'POST /sessions']);
+  assert.deepEqual(waiting(), []);
+});
+
+test('a book is marked as being read only after three minutes of listening, and its time waits until then', async () => {
+  const scene = world();
+  const state = paired();
+  scene.progress = [listening(0.1)];
+  scene.sittings = [sitting('s1', 120)];
+
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), ['PUT /progress']);
+  assert.deepEqual(Object.values(state.books).filter((entry) => isWaiting(entry, TODAY)), []);
+
+  scene.sent = [];
+  scene.sittings = [{ ...sitting('s1', 200), updatedAt: AFTER_PAIRING + 1000 }];
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), [`PUT ${STATUS_PATH}`, 'POST /sessions']);
+  assert.deepEqual(scene.sent[0]?.body, { status: 'reading' });
+  assert.deepEqual(scene.sent[1]?.body, { document: DOCUMENT, days: [{ date: TODAY, seconds: 200 }] });
+});
+
+test('a short listen starts nothing, and its time is still sent the next day', async () => {
+  const scene = world();
+  const state = paired();
+  scene.progress = [listening(0.1)];
+  scene.sittings = [sitting('s1', 60)];
+
+  await syncer(scene).run(state);
+  scene.sent = [];
+  await syncer(scene, NEXT_DAY).run(state);
+
+  assert.deepEqual(calls(scene), ['POST /sessions']);
+  assert.deepEqual(scene.sent[0]?.body, { document: DOCUMENT, days: [{ date: TODAY, seconds: 60 }] });
+});
+
+test('a finished book is started again only by new listening after the finish', async () => {
+  const scene = world();
+  const state = paired();
+  scene.progress = [listening(0.99, true)];
+  scene.sittings = [sitting('s1', 600)];
+
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), ['PUT /progress', 'POST /sessions', `PUT ${STATUS_PATH}`]);
+  assert.deepEqual(scene.sent[2]?.body, { status: 'read' });
+
+  scene.sent = [];
+  scene.progress = [{ ...listening(0.02), lastUpdate: AFTER_PAIRING + 1000 }];
+  scene.sittings = [{ ...sitting('s2', 240), updatedAt: AFTER_PAIRING + 1000 }];
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), ['PUT /progress', `PUT ${STATUS_PATH}`, 'POST /sessions']);
+  assert.deepEqual(scene.sent[1]?.body, { status: 'reading' });
 });
 
 test('a finished book is marked finished once, after its place', async () => {

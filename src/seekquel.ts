@@ -9,6 +9,7 @@ const HTTP_TOO_MANY = 429;
 const HTTP_FORBIDDEN = 403;
 const PENDING_TYPE = 'authorization_pending';
 const FINISHED_STATUS = 'read';
+const READING_STATUS = 'reading';
 
 export interface PairingStart {
   readonly deviceCode: string;
@@ -108,8 +109,16 @@ export class SeekquelClient {
   }
 
   async markFinished(key: string, document: string): Promise<boolean> {
+    return this.setStatus(key, document, FINISHED_STATUS);
+  }
+
+  async markReading(key: string, document: string): Promise<boolean> {
+    return this.setStatus(key, document, READING_STATUS);
+  }
+
+  private async setStatus(key: string, document: string, status: string): Promise<boolean> {
     return this.unlessNotPlaced(() =>
-      this.send('PUT', `/documents/${encodeURIComponent(document)}/status`, key, { status: FINISHED_STATUS }),
+      this.send('PUT', `/documents/${encodeURIComponent(document)}/status`, key, { status }),
     );
   }
 

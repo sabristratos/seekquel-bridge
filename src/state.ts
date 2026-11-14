@@ -13,6 +13,9 @@ export interface BookState {
   lastSentAt: number | null;
   finishedSent: boolean;
   finishPending: boolean;
+  finishedInSource: boolean;
+  readingSent: boolean;
+  listenedSinceFinish: Record<string, number>;
   days: Record<string, Record<string, number>>;
   dirtyDays: string[];
 }
@@ -68,6 +71,9 @@ export function newBook(book: SourceBook | null): BookState {
     lastSentAt: null,
     finishedSent: false,
     finishPending: false,
+    finishedInSource: false,
+    readingSent: false,
+    listenedSinceFinish: {},
     days: {},
     dirtyDays: [],
   };
@@ -103,7 +109,12 @@ export class StateStore {
       throw new Error(`The saved state in ${this.path} was written by a different version of Seekquel Bridge.`);
     }
 
-    return { ...emptyState(), ...(parsed as Partial<State>) };
+    const state = { ...emptyState(), ...(parsed as Partial<State>) };
+
+    return {
+      ...state,
+      listeners: state.listeners.map((listener) => ({ ...listener, books: withCurrentFields(listener.books) })),
+    };
   }
 
   async save(state: State): Promise<void> {
@@ -128,12 +139,14 @@ function fromFirstState(first: FirstState): State {
         deviceKey: first.deviceKey ?? null,
         pairedAt: first.pairedAt ?? null,
         cursors: first.cursors ?? {},
-        books: Object.fromEntries(
-          Object.entries(first.books ?? {}).map(([document, book]) => [document, { ...newBook(book.book), ...book }]),
-        ),
+        books: withCurrentFields(first.books ?? {}),
       },
     ],
   };
+}
+
+function withCurrentFields(books: Record<string, BookState>): Record<string, BookState> {
+  return Object.fromEntries(Object.entries(books).map(([document, book]) => [document, { ...newBook(book.book), ...book }]));
 }
 
 function isMissingFile(error: unknown): boolean {

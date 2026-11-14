@@ -124,9 +124,9 @@ export class ListenerRunner {
     this.nextSyncAt = now + this.deps.config.pollSeconds * MS_PER_SECOND;
     this.live.start();
 
-    if (report.placesSent + report.daysSent + report.finishesSent > 0) {
+    if (report.placesSent + report.readingSent + report.daysSent + report.finishesSent > 0) {
       this.deps.log(
-        `${this.label()}: sent ${report.placesSent} places, ${report.daysSent} days of time and ${report.finishesSent} finished books.`,
+        `${this.label()}: sent ${report.placesSent} places, ${report.readingSent} books started, ${report.daysSent} days of time and ${report.finishesSent} finished books.`,
       );
     }
 

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DAYS_KEPT, MAX_DOCUMENT_LENGTH, MIN_FRACTION_DELTA, MS_PER_DAY } from './constants.js';
+import { DAYS_KEPT, MAX_DOCUMENT_LENGTH, MIN_FRACTION_DELTA, MS_PER_DAY, READING_AFTER_SECONDS } from './constants.js';
 import type { SeekquelClient } from './seekquel.js';
 import type { Source } from './sources/types.js';
 import { newBook, type BookState, type Listener, type SourceCursor } from './state.js';
@@ -8,6 +8,7 @@ const HASHED_ID_LENGTH = 48;
 
 export interface SyncReport {
   readonly placesSent: number;
+  readonly readingSent: number;
   readonly daysSent: number;
   readonly finishesSent: number;
 }
@@ -34,12 +35,13 @@ export class Syncer {
 
     await this.collectSittings(listener, cursor);
 
+    const readingSent = await this.sendReading(listener, key);
     const daysSent = await this.sendDays(listener, key);
     const finishesSent = await this.sendFinishes(listener, key);
 
     this.forgetOldDays(listener);
 
-    return { placesSent, daysSent, finishesSent };
+    return { placesSent, readingSent, daysSent, finishesSent };
   }
 
   private async sendPlaces(listener: Listener, key: string, cursor: SourceCursor): Promise<number> {
@@ -57,6 +59,8 @@ export class Syncer {
           entry.lastSentAt = this.now();
           sent++;
         }
+
+        entry.finishedInSource = change.finished;
 
         if (!change.finished) {
           entry.finishedSent = false;
@@ -78,6 +82,7 @@ export class Syncer {
 
       if (entry.book !== null) {
         (entry.days[sitting.date] ??= {})[sitting.sittingId] = sitting.seconds;
+        entry.listenedSinceFinish[sitting.sittingId] = sitting.seconds;
 
         if (!entry.dirtyDays.includes(sitting.date)) {
           entry.dirtyDays.push(sitting.date);
@@ -88,21 +93,44 @@ export class Syncer {
     }
   }
 
-  private async sendDays(listener: Listener, key: string): Promise<number> {
+  private async sendReading(listener: Listener, key: string): Promise<number> {
     let sent = 0;
 
     for (const [document, entry] of Object.entries(listener.books)) {
-      if (entry.dirtyDays.length === 0 || entry.lastFraction === null) {
+      if (entry.book === null || entry.lastFraction === null || !readingDue(entry)) {
         continue;
       }
 
-      const days = entry.dirtyDays.map((date) => ({ date, seconds: secondsOn(entry, date) }));
+      entry.placed = await this.seekquel.markReading(key, document);
+
+      if (entry.placed) {
+        entry.readingSent = true;
+        entry.lastSentAt = this.now();
+        sent++;
+      }
+    }
+
+    return sent;
+  }
+
+  private async sendDays(listener: Listener, key: string): Promise<number> {
+    const today = localDate(this.now());
+    let sent = 0;
+
+    for (const [document, entry] of Object.entries(listener.books)) {
+      const ready = sendableDays(entry, today);
+
+      if (ready.length === 0 || entry.lastFraction === null) {
+        continue;
+      }
+
+      const days = ready.map((date) => ({ date, seconds: secondsOn(entry, date) }));
 
       entry.placed = await this.seekquel.pushDays(key, document, days);
 
       if (entry.placed) {
         sent += days.length;
-        entry.dirtyDays = [];
+        entry.dirtyDays = entry.dirtyDays.filter((date) => !ready.includes(date));
         entry.lastSentAt = this.now();
       }
     }
@@ -123,6 +151,8 @@ export class Syncer {
       if (entry.placed) {
         entry.finishPending = false;
         entry.finishedSent = true;
+        entry.readingSent = false;
+        entry.listenedSinceFinish = {};
         entry.lastSentAt = this.now();
         sent++;
       }
@@ -158,8 +188,24 @@ export class Syncer {
   }
 }
 
-export function isWaiting(entry: BookState): boolean {
-  return entry.book !== null && !entry.placed && (entry.dirtyDays.length > 0 || entry.finishPending);
+export function isWaiting(entry: BookState, today: string): boolean {
+  return entry.book !== null && !entry.placed && (sendableDays(entry, today).length > 0 || entry.finishPending || readingDue(entry));
+}
+
+function readingDue(entry: BookState): boolean {
+  return !entry.readingSent && !entry.finishedInSource && !entry.finishPending && listenedSeconds(entry) >= READING_AFTER_SECONDS;
+}
+
+function sendableDays(entry: BookState, today: string): string[] {
+  if (entry.readingSent || entry.finishPending || entry.finishedSent) {
+    return entry.dirtyDays;
+  }
+
+  return entry.dirtyDays.filter((date) => date < today);
+}
+
+function listenedSeconds(entry: BookState): number {
+  return Object.values(entry.listenedSinceFinish).reduce((sum, seconds) => sum + seconds, 0);
 }
 
 export function secondsOn(entry: BookState, date: string): number {

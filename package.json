@@ -1,6 +1,6 @@
 {
   "name": "seekquel-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Logs listening and reading from a self-hosted book server into Seekquel",
   "license": "MIT",
   "private": true,
