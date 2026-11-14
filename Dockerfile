@@ -7,7 +7,9 @@ RUN npx tsc -p tsconfig.json --outDir dist --rootDir . --noEmit false \
     && rm -rf dist/test
 
 FROM node:22-alpine
-LABEL org.opencontainers.image.source="https://github.com/sabristratos/seekquel-bridge" \n      org.opencontainers.image.description="Logs Audiobookshelf listening into Seekquel" \n      org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.source="https://github.com/sabristratos/seekquel-bridge"
+LABEL org.opencontainers.image.description="Logs Audiobookshelf listening into Seekquel"
+LABEL org.opencontainers.image.licenses="MIT"
 ENV NODE_ENV=production DATA_DIR=/data STATUS_PORT=4410
 WORKDIR /app
 COPY package.json package-lock.json ./
