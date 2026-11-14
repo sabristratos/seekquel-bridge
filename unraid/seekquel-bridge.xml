@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>seekquel-bridge</Name>
+  <Repository>ghcr.io/sabristratos/seekquel-bridge:latest</Repository>
+  <Registry>https://github.com/sabristratos/seekquel-bridge/pkgs/container/seekquel-bridge</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/sabristratos/seekquel-bridge/issues</Support>
+  <Project>https://github.com/sabristratos/seekquel-bridge</Project>
+  <Overview>Logs what you listen to on Audiobookshelf into Seekquel: listening time, your place and finished books. Start it, open the WebUI, sign in to Audiobookshelf and approve it in Seekquel. Nothing else to set.</Overview>
+  <Category>MediaApp:Books Tools:</Category>
+  <WebUI>http://[IP]:[PORT:4410]/</WebUI>
+  <ExtraParams>--add-host host.docker.internal:host-gateway</ExtraParams>
+  <Config Name="Web page" Target="4410" Default="4410" Mode="tcp" Description="The page where you sign in and see what is being logged." Type="Port" Display="always" Required="true" Mask="false">4410</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/seekquel-bridge" Mode="rw" Description="Keeps the connection so you only set it up once." Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/seekquel-bridge</Config>
+  <Config Name="Audiobookshelf address" Target="ABS_URL" Default="" Mode="" Description="Optional. Leave empty and type it on the page if it is not found by itself." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+</Container>

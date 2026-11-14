@@ -1,0 +1,14 @@
+services:
+  seekquel-bridge:
+    image: ghcr.io/sabristratos/seekquel-bridge:latest
+    container_name: seekquel-bridge
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - seekquel-bridge-data:/data
+    ports:
+      - "4410:4410"
+
+volumes:
+  seekquel-bridge-data:
