@@ -1,3 +1,7 @@
+import type { Config } from '../config.js';
+import type { Fetch } from '../http.js';
+import type { SourceAccess } from '../state.js';
+
 export type SourceFormat = 'audiobook' | 'epub';
 
 export interface SourceBook {
@@ -38,4 +42,36 @@ export interface Source {
   sittingsSince(since: number): Promise<readonly SourceSitting[]>;
   book(id: string): Promise<SourceBook | null>;
   cover(id: string): Promise<SourceImage | null>;
+}
+
+export type ServerKind = 'audiobookshelf' | 'storyteller';
+
+export class SourceSignedOutError extends Error {}
+
+export class SignInRefusedError extends Error {}
+
+export interface SignedIn {
+  readonly access: SourceAccess;
+  readonly name: string | null;
+}
+
+export interface LiveFeed {
+  start(): void;
+  stop(): void;
+}
+
+export interface SourceDeps {
+  readonly config: Config;
+  readonly fetcher: Fetch;
+  readonly remember: (access: SourceAccess) => Promise<void>;
+}
+
+export interface ServerType {
+  readonly kind: ServerKind;
+  readonly name: string;
+  readonly usualAddresses: readonly string[];
+  detect(fetcher: Fetch, url: string): Promise<boolean>;
+  signIn(fetcher: Fetch, url: string, username: string, password: string): Promise<SignedIn>;
+  source(access: SourceAccess, deps: SourceDeps): Source;
+  live(access: SourceAccess, onChange: () => void): LiveFeed | null;
 }

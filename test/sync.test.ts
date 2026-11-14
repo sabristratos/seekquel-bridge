@@ -67,6 +67,12 @@ function fetcher(scene: World): typeof fetch {
       return item === undefined ? answer(404, {}) : answer(200, item);
     }
 
+    if ((init?.method ?? 'GET') === 'GET') {
+      return scene.seekquelStatus === 200
+        ? answer(200, { match_status: 'matched', book: { status: 'reading' } })
+        : answer(200, { match_status: 'unmatched', book: null });
+    }
+
     scene.sent.push({
       method: init?.method ?? 'GET',
       path: url.pathname.replace('/reading', ''),
@@ -83,7 +89,7 @@ function syncer(scene: World, now = AFTER_PAIRING): Syncer {
   const fetch = fetcher(scene);
 
   return new Syncer(
-    new AudiobookshelfSource({ url: ABS_URL, token: 'abs-token', refreshToken: null }, [], fetch, async () => undefined),
+    new AudiobookshelfSource({ kind: 'audiobookshelf', url: ABS_URL, token: 'abs-token', refreshToken: null }, [], fetch, async () => undefined),
     new SeekquelClient(SEEKQUEL_URL, fetch),
     () => now,
   );
@@ -97,7 +103,7 @@ function calls(scene: World): string[] {
 }
 
 function paired(): Listener {
-  return { ...newListener({ url: ABS_URL, token: 'abs-token', refreshToken: null }, 'tester'), deviceKey: 'device-key', pairedAt: PAIRED_AT };
+  return { ...newListener({ kind: 'audiobookshelf', url: ABS_URL, token: 'abs-token', refreshToken: null }, 'tester'), deviceKey: 'device-key', pairedAt: PAIRED_AT };
 }
 
 function listening(fraction: number, finished = false): Record<string, unknown> {
@@ -176,6 +182,60 @@ test('a book is marked as being read only after three minutes of listening, and 
   assert.deepEqual(scene.sent[1]?.body, { document: DOCUMENT, days: [{ date: TODAY, seconds: 200 }] });
 });
 
+test('listening split across two days starts the read on the second day, before either day is sent', async () => {
+  const scene = world();
+  const state = paired();
+  const tomorrow = localDate(NEXT_DAY);
+  scene.progress = [listening(0.1)];
+  scene.sittings = [sitting('s1', 120)];
+
+  await syncer(scene).run(state);
+
+  scene.sent = [];
+  scene.sittings = [{ ...sitting('s2', 120), date: tomorrow, updatedAt: NEXT_DAY }];
+  await syncer(scene, NEXT_DAY).run(state);
+
+  assert.deepEqual(calls(scene), [`PUT ${STATUS_PATH}`, 'POST /sessions']);
+  assert.deepEqual(scene.sent[1]?.body, { document: DOCUMENT, days: [{ date: TODAY, seconds: 120 }, { date: tomorrow, seconds: 120 }] });
+});
+
+test('a finish taken back in Audiobookshelf starts nothing, and finishing again is sent again', async () => {
+  const scene = world();
+  const state = paired();
+  scene.progress = [listening(0.99, true)];
+
+  await syncer(scene).run(state);
+
+  scene.sent = [];
+  scene.progress = [{ ...listening(0.99), lastUpdate: AFTER_PAIRING + 1000 }];
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), ['PUT /progress']);
+
+  scene.sent = [];
+  scene.progress = [{ ...listening(0.99, true), lastUpdate: AFTER_PAIRING + 2000 }];
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), ['PUT /progress', `PUT ${STATUS_PATH}`]);
+  assert.deepEqual(scene.sent[1]?.body, { status: 'read' });
+});
+
+test('a place Seekquel could not take is sent again on the next pass', async () => {
+  const scene = world();
+  const state = paired();
+  scene.progress = [listening(0.3)];
+  scene.seekquelStatus = 503;
+
+  await assert.rejects(syncer(scene).run(state));
+
+  scene.seekquelStatus = 200;
+  scene.sent = [];
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), ['PUT /progress']);
+  assert.equal(scene.sent[0]?.body.percentage, 0.3);
+});
+
 test('a short listen starts nothing, and its time is still sent the next day', async () => {
   const scene = world();
   const state = paired();
@@ -224,6 +284,53 @@ test('a finished book is marked finished once, after its place', async () => {
   );
   assert.equal(scene.sent[0]?.body.percentage, 1);
   assert.deepEqual(scene.sent[1]?.body, { status: 'read' });
+});
+
+test('an ebook is marked as being read once its place moves forward a little, and an audiobook skipped ahead is not', async () => {
+  const scene = world();
+  const state = paired();
+  const ebook = (fraction: number, at: number): Record<string, unknown> => ({
+    libraryItemId: 'ebook-1', duration: 0, progress: 0, ebookProgress: fraction, isFinished: false, lastUpdate: at,
+  });
+  scene.items['ebook-1'] = {
+    id: 'ebook-1',
+    libraryId: 'lib-books',
+    mediaType: 'book',
+    media: { audioFiles: [], ebookFile: { ebookFormat: 'epub' }, metadata: { title: 'The Read Book', authors: [] } },
+  };
+  scene.progress = [ebook(0.4, AFTER_PAIRING), { ...listening(0.4) }];
+
+  await syncer(scene).run(state);
+
+  scene.sent = [];
+  scene.progress = [ebook(0.405, AFTER_PAIRING + 1000), { ...listening(0.6), lastUpdate: AFTER_PAIRING + 1000 }];
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), ['PUT /progress', 'PUT /progress']);
+
+  scene.sent = [];
+  scene.progress = [ebook(0.42, AFTER_PAIRING + 2000)];
+  await syncer(scene).run(state);
+
+  assert.deepEqual(calls(scene), ['PUT /progress', `PUT /documents/${encodeURIComponent('abs:ebook-1')}/status`]);
+  assert.deepEqual(scene.sent[1]?.body, { status: 'reading' });
+});
+
+test('a book Seekquel is waiting on the reader to choose says so even when no time is sent', async () => {
+  const scene = world();
+  const state = paired();
+  scene.progress = [listening(0.1)];
+  scene.seekquelStatus = 409;
+
+  await syncer(scene).run(state);
+  await syncer(scene).run(state);
+
+  assert.deepEqual(Object.values(state.books).map((entry) => isWaiting(entry, TODAY)), [true]);
+
+  scene.seekquelStatus = 200;
+  await syncer(scene).run(state);
+
+  assert.deepEqual(Object.values(state.books).map((entry) => isWaiting(entry, TODAY)), [false]);
 });
 
 test('podcasts, other libraries and anything from before pairing are left alone', async () => {

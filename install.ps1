@@ -4,7 +4,6 @@ $Image = if ($env:SEEKQUEL_BRIDGE_IMAGE) { $env:SEEKQUEL_BRIDGE_IMAGE } else { '
 $Name = 'seekquel-bridge'
 $Volume = 'seekquel-bridge-data'
 $Port = if ($env:SEEKQUEL_BRIDGE_PORT) { $env:SEEKQUEL_BRIDGE_PORT } else { '4410' }
-$AbsInternalPort = '80'
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Output 'Docker is not installed. Install Docker Desktop, then run this again.'
@@ -19,31 +18,48 @@ if ($LASTEXITCODE -ne 0) {
 
 $networkArgs = @()
 $addressArgs = @()
-$absLine = docker ps --format '{{.ID}} {{.Image}} {{.Names}}' |
-    Where-Object { $_ -match 'audiobookshelf' -and $_ -notmatch $Name } |
-    Select-Object -First 1
+$extraNetworks = @()
+$found = @()
 
-if ($absLine) {
-    $absId = ($absLine -split ' ')[0]
-    $absName = (docker inspect -f '{{.Name}}' $absId).TrimStart('/')
-    $absNetwork = ((docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}' $absId) -split ' ')[0]
+function Find-Server([string]$Pattern, [string]$InternalPort, [string]$EnvName, [string]$Label) {
+    $line = docker ps --format '{{.ID}} {{.Image}} {{.Names}}' |
+        Where-Object { $_ -match $Pattern -and $_ -notmatch $Name } |
+        Select-Object -First 1
 
-    if ($absNetwork -and $absNetwork -notin @('bridge', 'host', 'none')) {
-        $networkArgs = @('--network', $absNetwork)
-        $addressArgs = @('-e', "ABS_URL=http://${absName}:$AbsInternalPort")
+    if (-not $line) {
+        return
+    }
+
+    $id = ($line -split ' ')[0]
+    $serverName = (docker inspect -f '{{.Name}}' $id).TrimStart('/')
+    $network = ((docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}' $id) -split ' ')[0]
+
+    if ($network -and $network -notin @('bridge', 'host', 'none')) {
+        if ($script:networkArgs.Count -eq 0) {
+            $script:networkArgs = @('--network', $network)
+        }
+        elseif ($script:networkArgs[1] -ne $network) {
+            $script:extraNetworks += $network
+        }
+        $script:addressArgs += @('-e', "$EnvName=http://${serverName}:$InternalPort")
     }
     else {
-        $published = docker port $absId $AbsInternalPort 2> $null | Select-Object -First 1
+        $published = docker port $id $InternalPort 2> $null | Select-Object -First 1
         if ($published) {
             $hostPort = ($published -split ':')[-1]
-            $addressArgs = @('-e', "ABS_URL=http://host.docker.internal:$hostPort")
+            $script:addressArgs += @('-e', "$EnvName=http://host.docker.internal:$hostPort")
         }
     }
 
-    Write-Output "Found Audiobookshelf running as `"$absName`"."
+    $script:found += $Label
+    Write-Output "Found $Label running as `"$serverName`"."
 }
-else {
-    Write-Output 'No Audiobookshelf container found on this machine. You can type its address on the next page.'
+
+Find-Server 'audiobookshelf' '80' 'ABS_URL' 'Audiobookshelf'
+Find-Server 'storyteller' '8001' 'STORYTELLER_URL' 'Storyteller'
+
+if ($found.Count -eq 0) {
+    Write-Output 'No Audiobookshelf or Storyteller container found on this machine. You can type its address on the next page.'
 }
 
 if ($Image -match '/') {
@@ -65,6 +81,10 @@ docker @runArgs | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Output 'Seekquel Bridge could not be started. The message above says why.'
     exit 1
+}
+
+foreach ($network in $extraNetworks) {
+    docker network connect $network $Name | Out-Null
 }
 
 $address = "http://localhost:$Port"

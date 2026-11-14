@@ -111,7 +111,7 @@ async function post(actions: BridgeActions, path: string, request: IncomingMessa
 
   if (path === '/listeners') {
     await actions.signIn({
-      address: form.get('address')?.trim() ?? '',
+      address: (form.get('customAddress')?.trim() || form.get('address')?.trim()) ?? '',
       username: form.get('username')?.trim() ?? '',
       password: form.get('password') ?? '',
     });

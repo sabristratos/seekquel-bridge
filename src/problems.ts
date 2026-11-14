@@ -11,7 +11,7 @@ export function explain(error: unknown): string {
   }
 
   if (error instanceof SourceSignedOutError) {
-    return 'Audiobookshelf signed this listener out. Sign in again below.';
+    return 'Your server signed this account out. Sign in again below.';
   }
 
   if (error instanceof UnreachableError) {

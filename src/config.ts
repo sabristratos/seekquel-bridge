@@ -14,6 +14,10 @@ export interface AudiobookshelfConfig {
   readonly libraries: readonly string[];
 }
 
+export interface StorytellerConfig {
+  readonly url: string | null;
+}
+
 export interface Config {
   readonly seekquelApiUrl: string;
   readonly seekquelAppUrl: string;
@@ -22,6 +26,7 @@ export interface Config {
   readonly pollSeconds: number;
   readonly deviceName: string;
   readonly audiobookshelf: AudiobookshelfConfig;
+  readonly storyteller: StorytellerConfig;
 }
 
 export class ConfigError extends Error {}
@@ -37,6 +42,7 @@ export function loadConfig(env: Env): Config {
     pollSeconds: readInteger(env, 'POLL_SECONDS', DEFAULT_POLL_SECONDS, MIN_POLL_SECONDS),
     deviceName: text(env.DEVICE_NAME) ?? APP_NAME,
     audiobookshelf: readAudiobookshelf(env),
+    storyteller: { url: readUrl(env, 'STORYTELLER_URL') },
   };
 }
 

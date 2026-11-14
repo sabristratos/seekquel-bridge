@@ -1,11 +1,13 @@
 export const APP_NAME = 'Seekquel Bridge';
-export const APP_VERSION = '0.1.1';
+export const APP_VERSION = '0.1.2';
 export const DEVICE_IDENTIFIER = 'seekquel-bridge';
+export const READING_CLIENT = 'seekquel-bridge';
 
 export const DEFAULT_SEEKQUEL_API_URL = 'https://api.seekquel.app/reading';
 export const DEFAULT_SEEKQUEL_APP_URL = 'https://seekquel.app';
-export const PAIRING_LINK_PATH = '/settings/integrations/other';
+export const PAIRING_LINK_PATH = '/settings/integrations/seekquel-bridge';
 export const WAITING_BOOKS_PATH = '/settings/integrations/koreader/books';
+export const INSTALL_SCRIPT_URL = 'https://raw.githubusercontent.com/sabristratos/seekquel-bridge/main';
 export const TICK_SECONDS = 2;
 export const NUDGE_DELAY_SECONDS = 5;
 export const MIN_SECONDS_BETWEEN_NUDGED_SYNCS = 20;
@@ -33,3 +35,4 @@ export const MAX_ERRORS_KEPT = 20;
 
 export const MIN_FRACTION_DELTA = 0.0001;
 export const READING_AFTER_SECONDS = 180;
+export const READING_AFTER_FRACTION = 0.01;

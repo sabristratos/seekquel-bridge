@@ -1,5 +1,5 @@
 import qrcode from 'qrcode-generator';
-import { APP_NAME, APP_VERSION, MS_PER_SECOND } from './constants.js';
+import { APP_NAME, APP_VERSION, INSTALL_SCRIPT_URL, MS_PER_SECOND } from './constants.js';
 
 const PAIRING_REFRESH_SECONDS = 5;
 const CONNECTED_REFRESH_SECONDS = 30;
@@ -33,9 +33,15 @@ export interface ListenerView {
   readonly books: readonly BookView[];
 }
 
+export interface ServerView {
+  readonly name: string;
+  readonly url: string;
+}
+
 export interface PageModel {
   readonly now: number;
-  readonly foundAddress: string | null;
+  readonly foundServers: readonly ServerView[];
+  readonly update: string | null;
   readonly formProblem: { readonly address: string; readonly message: string } | null;
   readonly waitingBooksLink: string;
   readonly listeners: readonly ListenerView[];
@@ -85,12 +91,17 @@ input:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visibl
 form.inline { display: inline; }
 .actions { margin-top: 1.25rem; }
 .found { display: flex; align-items: baseline; gap: 0.5rem; }
+fieldset { border: 0; padding: 0; margin: 1rem 0 0; }
+legend { padding: 0; font-weight: 600; font-size: 0.9375rem; }
+.choice { display: flex; align-items: center; gap: 0.625rem; margin-top: 0.5rem; font-weight: 400; }
+.choice input { width: auto; margin: 0; }
 details { margin-top: 1rem; }
 summary { cursor: pointer; color: var(--action); font-size: 0.9375rem; }
 .approve { display: grid; grid-template-columns: 1fr auto; gap: 1.5rem; align-items: center; }
 .qr { width: 8.5rem; height: 8.5rem; padding: 0.5rem; background: #FFFFFF; border-radius: 8px; }
 .qr path { fill: #1E1C15; }
 .qr-note { max-width: 8.5rem; margin: 0.5rem 0 0; text-align: center; }
+.command { margin: 0.25rem 0 0.75rem; padding: 0.75rem 0.875rem; font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: 0.875rem; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sunken); border-radius: 8px; user-select: all; }
 .code { font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: 1.375rem; letter-spacing: 0.12em; user-select: all; }
 .problem { padding: 0.875rem 1rem; margin-bottom: 1rem; color: var(--problem-ink); background: var(--problem-wash); border-radius: 8px; }
 .books { list-style: none; margin: 0; padding: 0; }
@@ -119,12 +130,25 @@ ${refresh === null ? '' : `<meta http-equiv="refresh" content="${refresh}">`}
 <body>
 <main>
 <header>${LOGO}<h1>${APP_NAME}</h1></header>
+${model.update === null ? '' : updateNotice(model.update)}
 ${model.listeners.length === 0 ? firstSignIn(model) : model.listeners.map((listener) => listenerSection(model, listener)).join('')}
 ${model.listeners.length === 0 ? '' : addListener(model)}
 <footer><p class="soft small">Version ${APP_VERSION}</p></footer>
 </main>
 </body>
 </html>`;
+}
+
+function updateNotice(version: string): string {
+  return `<section class="card">
+<h2>Version ${escape(version)} is available</h2>
+<p class="soft">To update, run the install command again on this machine. Your accounts and your connection to Seekquel are kept.</p>
+<p class="small">Linux, macOS or a NAS</p>
+<p class="command">curl -fsSL ${INSTALL_SCRIPT_URL}/install.sh | sh</p>
+<p class="small">Windows with Docker Desktop, in PowerShell</p>
+<p class="command">irm ${INSTALL_SCRIPT_URL}/install.ps1 | iex</p>
+<p class="soft small">On Unraid, apply the update from the Docker tab. With Docker Compose, pull the image and start it again.</p>
+</section>`;
 }
 
 function refreshSeconds(model: PageModel): number | null {
@@ -137,28 +161,46 @@ function refreshSeconds(model: PageModel): number | null {
 
 function firstSignIn(model: PageModel): string {
   return `<section class="card">
-<h2>Sign in to Audiobookshelf</h2>
-<p class="soft">Step 1 of 2. Use the account you listen with.</p>
-${signInForm(model, model.formProblem?.address ?? model.foundAddress, 'Sign in')}
-<p class="soft small actions">Your password goes to your own Audiobookshelf and is not kept. Seekquel never sees it.</p>
+<h2>Sign in to your server</h2>
+<p class="soft">Step 1 of 2. Use the account you read or listen with.</p>
+${signInForm(model, model.foundServers, 'Sign in')}
+<p class="soft small actions">Your password goes to your own server and is not kept. Seekquel never sees it.</p>
 </section>`;
 }
 
-function signInForm(model: PageModel, address: string | null, action: string): string {
+function signInForm(model: PageModel, servers: readonly ServerView[], action: string): string {
   const problem = model.formProblem === null ? '' : `<p class="problem" role="alert">${escape(model.formProblem.message)}</p>`;
-  const known = address !== null && model.formProblem === null;
-  const field = `<label for="address">Audiobookshelf address</label>
-<input id="address" name="address" type="text" inputmode="url" required placeholder="http://192.168.1.10:13378" value="${escape(address ?? '')}">`;
+  const typed = (name: string, required: boolean): string => `<label for="${name}">Server address</label>
+<input id="${name}" name="${name}" type="text" inputmode="url"${required ? ' required' : ''} placeholder="http://192.168.1.10:13378" value="${escape(model.formProblem?.address ?? '')}">`;
+  const choice =
+    servers.length === 0 || model.formProblem !== null
+      ? typed('address', true)
+      : `${serverChoice(servers)}<details><summary>Use a different address</summary>${typed('customAddress', false)}</details>`;
 
   return `${problem}
 <form method="post" action="/listeners">
-${known ? `<p class="found"><span>Found your Audiobookshelf.</span></p><details><summary>Use a different address</summary>${field}</details>` : field}
+${choice}
 <label for="username">Username</label>
 <input id="username" name="username" autocomplete="username" required>
 <label for="password">Password</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required>
 <p class="actions"><button class="button" type="submit">${action}</button></p>
 </form>`;
+}
+
+function serverChoice(servers: readonly ServerView[]): string {
+  const [only] = servers;
+
+  if (servers.length === 1 && only !== undefined) {
+    return `<p class="found"><span>Found your ${escape(only.name)}.</span></p><input type="hidden" name="address" value="${escape(only.url)}">`;
+  }
+
+  return `<fieldset><legend>Which server?</legend>${servers
+    .map(
+      (server, index) =>
+        `<label class="choice"><input type="radio" name="address" value="${escape(server.url)}"${index === 0 ? ' checked' : ''}>${escape(server.name)}</label>`,
+    )
+    .join('')}</fieldset>`;
 }
 
 function listenerSection(model: PageModel, listener: ListenerView): string {
@@ -174,7 +216,7 @@ ${disconnect(listener)}
 
 function listenerBody(model: PageModel, listener: ListenerView): string {
   if (listener.state === 'signed-out') {
-    return `<div class="card"><h3>Sign in again</h3>${signInForm(model, listener.address, 'Sign in')}</div>`;
+    return `<div class="card"><h3>Sign in again</h3>${signInForm(model, [{ name: listener.sourceName, url: listener.address }], 'Sign in')}</div>`;
   }
 
   if (listener.state === 'pairing') {
@@ -195,7 +237,7 @@ function pairing(listener: ListenerView): string {
 <div class="approve">
 <div>
 <p><a class="button" href="${escape(listener.pairing.link)}" target="_blank" rel="noopener">Approve in Seekquel</a></p>
-<p class="soft small">Or enter this code under Settings, Integrations, Another reading app:</p>
+<p class="soft small">Or enter this code in Seekquel under Settings, Integrations, Seekquel Bridge:</p>
 <p class="code">${escape(listener.pairing.userCode)}</p>
 </div>
 <div class="scan">
@@ -216,7 +258,7 @@ function connected(model: PageModel, listener: ListenerView): string {
 </div>
 ${
   listener.books.length === 0
-    ? '<p>Play a book in Audiobookshelf and it shows up here.</p>'
+    ? `<p>Read or listen to a book on ${escape(listener.sourceName)} and it shows up here.</p>`
     : `<ul class="books">${listener.books.map((book) => bookRow(model, listener, book)).join('')}</ul>`
 }
 </div>`;
@@ -239,7 +281,9 @@ ${book.authors === null ? '' : `<p class="soft small">${escape(book.authors)}</p
 
 function bookLine(model: PageModel, book: BookView): string {
   if (book.waiting) {
-    return `Seekquel could not tell which book this is. <a href="${escape(model.waitingBooksLink)}" target="_blank" rel="noopener">Choose it in Seekquel</a> and its time is added.`;
+    const choose = `<a href="${escape(model.waitingBooksLink)}" target="_blank" rel="noopener">Choose it in Seekquel</a>`;
+
+    return `Seekquel could not tell which book this is. ${choose}${book.secondsToday > 0 ? ' and its time is added' : ''}.`;
   }
 
   const parts = [
@@ -251,20 +295,30 @@ function bookLine(model: PageModel, book: BookView): string {
   return `<span class="soft">${parts.join(' · ')}</span>`;
 }
 
+function addableServers(model: PageModel): readonly ServerView[] {
+  if (model.foundServers.length > 0) {
+    return model.foundServers;
+  }
+
+  const first = model.listeners[0];
+
+  return first === undefined ? [] : [{ name: first.sourceName, url: first.address }];
+}
+
 function disconnect(listener: ListenerView): string {
   return `<details>
 <summary>Disconnect</summary>
-<p class="soft small actions">Stops logging for this listener and forgets the sign-in. Books already in Seekquel stay. To finish, also remove Seekquel Bridge in Seekquel under Settings, Integrations.</p>
-<form method="post" action="/listeners/${listener.id}/disconnect"><button class="button quiet plain" type="submit">Disconnect this listener</button></form>
+<p class="soft small actions">Stops logging for this account and forgets the sign-in. Books already in Seekquel stay. To finish, also remove Seekquel Bridge in Seekquel under Settings, Integrations.</p>
+<form method="post" action="/listeners/${listener.id}/disconnect"><button class="button quiet plain" type="submit">Disconnect this account</button></form>
 </details>`;
 }
 
 function addListener(model: PageModel): string {
   return `<details${model.formProblem === null ? '' : ' open'}>
-<summary>Add another listener</summary>
+<summary>Add another account</summary>
 <div class="card">
-<p class="soft">Someone else who listens on this server signs in here and connects their own Seekquel account.</p>
-${signInForm(model, model.formProblem?.address ?? model.listeners[0]?.address ?? model.foundAddress, 'Add listener')}
+<p class="soft">Another person, or another of your servers, signs in here and connects to Seekquel.</p>
+${signInForm(model, addableServers(model), 'Add account')}
 </div>
 </details>`;
 }

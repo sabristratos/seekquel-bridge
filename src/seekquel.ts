@@ -1,4 +1,4 @@
-import { APP_NAME, APP_VERSION, DEVICE_IDENTIFIER, MAX_TEXT_LENGTH, SECONDS_PER_DAY } from './constants.js';
+import { APP_NAME, APP_VERSION, DEVICE_IDENTIFIER, MAX_TEXT_LENGTH, READING_CLIENT, SECONDS_PER_DAY } from './constants.js';
 import { asNumber, asString, field, HttpError, requestJson, type Fetch } from './http.js';
 import type { SourceBook } from './sources/types.js';
 
@@ -10,6 +10,12 @@ const HTTP_FORBIDDEN = 403;
 const PENDING_TYPE = 'authorization_pending';
 const FINISHED_STATUS = 'read';
 const READING_STATUS = 'reading';
+const READER_STATUSES: readonly string[] = ['unmatched', 'unidentified'];
+
+export interface Placement {
+  readonly placed: boolean;
+  readonly awaitingReader: boolean;
+}
 
 export interface PairingStart {
   readonly deviceCode: string;
@@ -42,6 +48,7 @@ export class SeekquelClient {
       device_name: deviceName,
       platform,
       app: APP_NAME,
+      client: READING_CLIENT,
     });
     const deviceCode = asString(field(payload, 'device_code'));
     const userCode = asString(field(payload, 'user_code'));
@@ -122,13 +129,23 @@ export class SeekquelClient {
     );
   }
 
-  async describeDevice(key: string, deviceName: string, platform: string, lastSyncAt: number | null, lastSyncOk: boolean | null): Promise<void> {
-    await this.send('PUT', '/device', key, {
+  async placement(key: string, document: string): Promise<Placement> {
+    const answer = await this.send('GET', `/documents/${encodeURIComponent(document)}`, key);
+    const status = asString(field(field(answer, 'data'), 'match_status')) ?? asString(field(answer, 'match_status'));
+    const book = field(field(answer, 'data'), 'book') ?? field(answer, 'book');
+
+    return { placed: book != null, awaitingReader: status !== null && READER_STATUSES.includes(status) };
+  }
+
+  async describeDevice(key: string, deviceName: string, platform: string, lastSyncAt: number | null, lastSyncOk: boolean | null): Promise<string | null> {
+    const answer = await this.send('PUT', '/device', key, {
       device_name: deviceName,
       platform,
       app_version: APP_VERSION,
       diagnostics: { last_sync_at: lastSyncAt, last_sync_ok: lastSyncOk },
     });
+
+    return asString(field(answer, 'latest_version'));
   }
 
   private async unlessNotPlaced(call: () => Promise<unknown>): Promise<boolean> {
@@ -145,13 +162,13 @@ export class SeekquelClient {
     }
   }
 
-  private async send(method: 'POST' | 'PUT', path: string, key: string | null, body: unknown): Promise<unknown> {
+  private async send(method: 'GET' | 'POST' | 'PUT', path: string, key: string | null, body?: unknown): Promise<unknown> {
     try {
       return await requestJson(this.fetcher, {
         service: SERVICE,
         method,
         url: `${this.apiUrl}${path}`,
-        body,
+        ...(body === undefined ? {} : { body }),
         ...(key === null ? {} : { token: key }),
       });
     } catch (error) {

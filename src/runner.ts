@@ -10,9 +10,8 @@ import {
 import type { Fetch } from './http.js';
 import { explain } from './problems.js';
 import { KeyRefusedError, type SeekquelClient } from './seekquel.js';
-import { AudiobookshelfSource, SourceSignedOutError } from './sources/audiobookshelf.js';
-import { AudiobookshelfLive } from './sources/audiobookshelfLive.js';
-import type { SourceImage } from './sources/types.js';
+import { serverType } from './sources/servers.js';
+import { SourceSignedOutError, type LiveFeed, type Source, type SourceImage } from './sources/types.js';
 import type { Listener } from './state.js';
 import { Syncer } from './sync.js';
 
@@ -44,10 +43,11 @@ export class ListenerRunner {
   lastSyncAt: number | null = null;
   lastSyncOk: boolean | null = null;
   problem: string | null = null;
+  latestVersion: string | null = null;
 
-  private readonly source: AudiobookshelfSource;
+  private readonly source: Source;
   private readonly syncer: Syncer;
-  private readonly live: AudiobookshelfLive;
+  private readonly live: LiveFeed | null;
   private pairingState: PairingInProgress | null = null;
   private nextSyncAt = 0;
   private nextPairingAt = 0;
@@ -57,9 +57,11 @@ export class ListenerRunner {
     readonly listener: Listener,
     private readonly deps: RunnerDeps,
   ) {
-    this.source = new AudiobookshelfSource(listener.source, deps.config.audiobookshelf.libraries, deps.fetcher, deps.save);
+    const type = serverType(listener.source.kind);
+
+    this.source = type.source(listener.source, { config: deps.config, fetcher: deps.fetcher, remember: deps.save });
     this.syncer = new Syncer(this.source, deps.seekquel, deps.now);
-    this.live = new AudiobookshelfLive(listener.source, () => this.nudge());
+    this.live = type.live(listener.source, () => this.nudge());
   }
 
   get sourceName(): string {
@@ -93,7 +95,7 @@ export class ListenerRunner {
   }
 
   stop(): void {
-    this.live.stop();
+    this.live?.stop();
   }
 
   cover(document: string): Promise<SourceImage | null> {
@@ -122,7 +124,7 @@ export class ListenerRunner {
     this.problem = null;
     this.failures = 0;
     this.nextSyncAt = now + this.deps.config.pollSeconds * MS_PER_SECOND;
-    this.live.start();
+    this.live?.start();
 
     if (report.placesSent + report.readingSent + report.daysSent + report.finishesSent > 0) {
       this.deps.log(
@@ -132,7 +134,14 @@ export class ListenerRunner {
 
     await this.deps.seekquel
       .describeDevice(key, this.deps.config.deviceName, this.source.name, now, true)
-      .catch(() => undefined);
+      .then((latest) => {
+        this.latestVersion = latest ?? this.latestVersion;
+      })
+      .catch((error: unknown) => {
+        if (error instanceof KeyRefusedError) {
+          throw error;
+        }
+      });
   }
 
   private async pair(): Promise<void> {
@@ -198,7 +207,7 @@ export class ListenerRunner {
       this.pairingState = null;
     } else if (error instanceof SourceSignedOutError) {
       this.listener.signedOut = true;
-      this.live.stop();
+      this.live?.stop();
     } else {
       this.failures++;
     }

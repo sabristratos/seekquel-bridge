@@ -2,7 +2,7 @@ import { MS_PER_DAY } from '../constants.js';
 import { asArray, asNumber, asString, field, HttpError, requestJson, type Fetch } from '../http.js';
 import type { SourceAccess } from '../state.js';
 import { renew } from './audiobookshelfAccess.js';
-import type { Source, SourceBook, SourceImage, SourceProgress, SourceSitting } from './types.js';
+import { SourceSignedOutError, type Source, type SourceBook, type SourceImage, type SourceProgress, type SourceSitting } from './types.js';
 
 const SERVICE = 'Audiobookshelf';
 const SITTINGS_PER_PAGE = 100;
@@ -15,7 +15,7 @@ const DEFAULT_IMAGE_TYPE = 'image/jpeg';
 const COVER_WIDTH = 240;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export class SourceSignedOutError extends Error {}
+export { SourceSignedOutError } from './types.js';
 
 export class AudiobookshelfSource implements Source {
   readonly key = 'abs';

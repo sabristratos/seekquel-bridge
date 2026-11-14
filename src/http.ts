@@ -29,6 +29,7 @@ export interface JsonRequest {
   readonly token?: string;
   readonly headers?: Readonly<Record<string, string>>;
   readonly body?: unknown;
+  readonly form?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
 }
 
@@ -41,6 +42,8 @@ export async function requestJson(fetcher: Fetch, request: JsonRequest): Promise
 
   if (request.body !== undefined) {
     headers['Content-Type'] = 'application/json';
+  } else if (request.form !== undefined) {
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
   }
 
   let response: Response;
@@ -51,6 +54,7 @@ export async function requestJson(fetcher: Fetch, request: JsonRequest): Promise
       headers,
       signal: AbortSignal.timeout(request.timeoutMs ?? REQUEST_TIMEOUT_MS),
       ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      ...(request.form === undefined ? {} : { body: new URLSearchParams(request.form).toString() }),
     });
   } catch (cause) {
     throw new UnreachableError(request.service, cause);

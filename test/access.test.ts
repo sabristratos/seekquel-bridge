@@ -26,7 +26,7 @@ test('signing in keeps the tokens and never the password', async () => {
   };
 
   assert.deepEqual(await signIn(fetcher, URL_HOME, 'jo', 'secret'), {
-    access: { url: URL_HOME, token: 'access-1', refreshToken: 'refresh-1' },
+    access: { kind: 'audiobookshelf', url: URL_HOME, token: 'access-1', refreshToken: 'refresh-1' },
     name: 'jo',
   });
 });
@@ -51,19 +51,19 @@ test('an expired sign-in is renewed once and remembered', async () => {
       : answer(401, {});
   };
   const source = new AudiobookshelfSource(
-    { url: URL_HOME, token: 'access-1', refreshToken: 'refresh-1' },
+    { kind: 'audiobookshelf', url: URL_HOME, token: 'access-1', refreshToken: 'refresh-1' },
     [],
     fetcher,
     async (access) => void remembered.push(access),
   );
 
   assert.deepEqual(await source.progressSince(0), []);
-  assert.deepEqual(remembered, [{ url: URL_HOME, token: 'access-2', refreshToken: 'refresh-2' }]);
+  assert.deepEqual(remembered, [{ kind: 'audiobookshelf', url: URL_HOME, token: 'access-2', refreshToken: 'refresh-2' }]);
 });
 
 test('a sign-in that cannot be renewed asks the reader to sign in again', async () => {
   const fetcher: typeof fetch = async () => answer(401, {});
-  const source = new AudiobookshelfSource({ url: URL_HOME, token: 'old', refreshToken: null }, [], fetcher, async () => undefined);
+  const source = new AudiobookshelfSource({ kind: 'audiobookshelf', url: URL_HOME, token: 'old', refreshToken: null }, [], fetcher, async () => undefined);
 
   await assert.rejects(source.progressSince(0), SourceSignedOutError);
 });

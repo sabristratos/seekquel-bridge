@@ -1,5 +1,6 @@
 import { asString, field, HttpError, requestJson, UnreachableError, type Fetch } from '../http.js';
 import type { SourceAccess } from '../state.js';
+import { SignInRefusedError, type SignedIn } from './types.js';
 
 const SERVICE = 'Audiobookshelf';
 const APP_ID = 'audiobookshelf';
@@ -15,7 +16,7 @@ export const USUAL_ADDRESSES: readonly string[] = [
   'http://localhost:13378',
 ];
 
-export class SignInRefusedError extends Error {}
+export { SignInRefusedError } from './types.js';
 
 export async function isAudiobookshelf(fetcher: Fetch, url: string): Promise<boolean> {
   try {
@@ -41,11 +42,6 @@ export async function findServer(fetcher: Fetch, addresses: readonly string[]): 
   const found = answers.indexOf(true);
 
   return found === -1 ? null : (addresses[found] ?? null);
-}
-
-export interface SignedIn {
-  readonly access: SourceAccess;
-  readonly name: string | null;
 }
 
 export async function signIn(fetcher: Fetch, url: string, username: string, password: string): Promise<SignedIn> {
@@ -103,5 +99,5 @@ function accessFrom(url: string, answer: unknown): SourceAccess | null {
   const user = field(answer, 'user');
   const token = asString(field(user, 'accessToken')) ?? asString(field(user, 'token'));
 
-  return token === null ? null : { url, token, refreshToken: asString(field(user, 'refreshToken')) };
+  return token === null ? null : { kind: 'audiobookshelf', url, token, refreshToken: asString(field(user, 'refreshToken')) };
 }

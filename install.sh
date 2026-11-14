@@ -5,7 +5,6 @@ IMAGE="${SEEKQUEL_BRIDGE_IMAGE:-ghcr.io/sabristratos/seekquel-bridge:latest}"
 NAME="seekquel-bridge"
 VOLUME="seekquel-bridge-data"
 PORT="${SEEKQUEL_BRIDGE_PORT:-4410}"
-ABS_INTERNAL_PORT="80"
 
 say() {
   printf '%s\n' "$1"
@@ -21,30 +20,49 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-abs_id="$(docker ps --format '{{.ID}} {{.Image}} {{.Names}}' | grep -i audiobookshelf | grep -vi "$NAME" | head -n 1 | cut -d ' ' -f 1 || true)"
 network_args=""
 address_args=""
+extra_networks=""
+found=""
 
-if [ -n "$abs_id" ]; then
-  abs_name="$(docker inspect -f '{{.Name}}' "$abs_id" | sed 's#^/##')"
-  abs_network="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}' "$abs_id" | cut -d ' ' -f 1)"
+find_server() {
+  pattern="$1"
+  internal_port="$2"
+  env_name="$3"
+  label="$4"
+  id="$(docker ps --format '{{.ID}} {{.Image}} {{.Names}}' | grep -i "$pattern" | grep -vi "$NAME" | head -n 1 | cut -d ' ' -f 1 || true)"
 
-  case "$abs_network" in
+  [ -n "$id" ] || return 0
+
+  name="$(docker inspect -f '{{.Name}}' "$id" | sed 's#^/##')"
+  network="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}' "$id" | cut -d ' ' -f 1)"
+
+  case "$network" in
     "" | bridge | host | none)
-      abs_host_port="$(docker port "$abs_id" "$ABS_INTERNAL_PORT" 2>/dev/null | head -n 1 | sed 's/.*://' || true)"
-      if [ -n "$abs_host_port" ]; then
-        address_args="-e ABS_URL=http://host.docker.internal:$abs_host_port"
+      host_port="$(docker port "$id" "$internal_port" 2>/dev/null | head -n 1 | sed 's/.*://' || true)"
+      if [ -n "$host_port" ]; then
+        address_args="$address_args -e $env_name=http://host.docker.internal:$host_port"
       fi
       ;;
     *)
-      network_args="--network $abs_network"
-      address_args="-e ABS_URL=http://$abs_name:$ABS_INTERNAL_PORT"
+      if [ -z "$network_args" ]; then
+        network_args="--network $network"
+      elif [ "$network_args" != "--network $network" ]; then
+        extra_networks="$extra_networks $network"
+      fi
+      address_args="$address_args -e $env_name=http://$name:$internal_port"
       ;;
   esac
 
-  say "Found Audiobookshelf running as \"$abs_name\"."
-else
-  say "No Audiobookshelf container found on this machine. You can type its address on the next page."
+  found="$found $label"
+  say "Found $label running as \"$name\"."
+}
+
+find_server audiobookshelf 80 ABS_URL Audiobookshelf
+find_server storyteller 8001 STORYTELLER_URL Storyteller
+
+if [ -z "$found" ]; then
+  say "No Audiobookshelf or Storyteller container found on this machine. You can type its address on the next page."
 fi
 
 seekquel_args=""
@@ -67,6 +85,10 @@ docker run -d \
   $address_args \
   $seekquel_args \
   "$IMAGE" >/dev/null
+
+for network in $extra_networks; do
+  docker network connect "$network" "$NAME" >/dev/null
+done
 
 host_ip="$(hostname -I 2>/dev/null | cut -d ' ' -f 1 || true)"
 [ -n "$host_ip" ] || host_ip="localhost"

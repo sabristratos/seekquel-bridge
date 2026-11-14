@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DAYS_KEPT, MAX_DOCUMENT_LENGTH, MIN_FRACTION_DELTA, MS_PER_DAY, READING_AFTER_SECONDS } from './constants.js';
+import { DAYS_KEPT, MAX_DOCUMENT_LENGTH, MIN_FRACTION_DELTA, MS_PER_DAY, READING_AFTER_FRACTION, READING_AFTER_SECONDS } from './constants.js';
 import type { SeekquelClient } from './seekquel.js';
 import type { Source } from './sources/types.js';
 import { newBook, type BookState, type Listener, type SourceCursor } from './state.js';
@@ -34,6 +34,7 @@ export class Syncer {
     const placesSent = await this.sendPlaces(listener, key, cursor);
 
     await this.collectSittings(listener, cursor);
+    await this.askPlacement(listener, key);
 
     const readingSent = await this.sendReading(listener, key);
     const daysSent = await this.sendDays(listener, key);
@@ -61,6 +62,10 @@ export class Syncer {
         }
 
         entry.finishedInSource = change.finished;
+
+        if (!change.finished && entry.startFraction === null) {
+          entry.startFraction = change.fraction;
+        }
 
         if (!change.finished) {
           entry.finishedSent = false;
@@ -90,6 +95,19 @@ export class Syncer {
       }
 
       cursor.sittings = Math.max(cursor.sittings, sitting.updatedAt);
+    }
+  }
+
+  private async askPlacement(listener: Listener, key: string): Promise<void> {
+    for (const [document, entry] of Object.entries(listener.books)) {
+      if (entry.book === null || entry.placed || entry.lastFraction === null) {
+        continue;
+      }
+
+      const placement = await this.seekquel.placement(key, document);
+
+      entry.placed = placement.placed;
+      entry.awaitingReader = placement.awaitingReader;
     }
   }
 
@@ -153,6 +171,7 @@ export class Syncer {
         entry.finishedSent = true;
         entry.readingSent = false;
         entry.listenedSinceFinish = {};
+        entry.startFraction = null;
         entry.lastSentAt = this.now();
         sent++;
       }
@@ -189,11 +208,18 @@ export class Syncer {
 }
 
 export function isWaiting(entry: BookState, today: string): boolean {
-  return entry.book !== null && !entry.placed && (sendableDays(entry, today).length > 0 || entry.finishPending || readingDue(entry));
+  return entry.book !== null && !entry.placed && (entry.awaitingReader || sendableDays(entry, today).length > 0 || entry.finishPending || readingDue(entry));
 }
 
 function readingDue(entry: BookState): boolean {
-  return !entry.readingSent && !entry.finishedInSource && !entry.finishPending && listenedSeconds(entry) >= READING_AFTER_SECONDS;
+  return !entry.readingSent && !entry.finishedInSource && !entry.finishPending && (listenedSeconds(entry) >= READING_AFTER_SECONDS || readAhead(entry));
+}
+
+function readAhead(entry: BookState): boolean {
+  return entry.book?.format !== 'audiobook'
+    && entry.lastFraction !== null
+    && entry.startFraction !== null
+    && entry.lastFraction - entry.startFraction >= READING_AFTER_FRACTION;
 }
 
 function sendableDays(entry: BookState, today: string): string[] {

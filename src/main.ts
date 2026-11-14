@@ -5,10 +5,11 @@ import type { BookView, ListenerView, PageModel } from './page.js';
 import { ListenerRunner } from './runner.js';
 import { SeekquelClient } from './seekquel.js';
 import { startServer, type BridgeActions, type SignInAnswer } from './server.js';
-import { findServer, isAudiobookshelf, signIn, SignInRefusedError, USUAL_ADDRESSES } from './sources/audiobookshelfAccess.js';
-import type { SourceImage } from './sources/types.js';
+import { detectServer, findServers, serverType, type FoundServer } from './sources/servers.js';
+import { SignInRefusedError, type SourceImage } from './sources/types.js';
 import { newListener, StateStore, type BookState, type Listener, type State } from './state.js';
 import { isWaiting, localDate, secondsOn } from './sync.js';
+import { isNewer } from './version.js';
 
 const EXIT_BAD_CONFIG = 78;
 const PERCENT = 100;
@@ -17,7 +18,7 @@ class Bridge implements BridgeActions {
   private readonly seekquel: SeekquelClient;
   private readonly runners = new Map<string, ListenerRunner>();
   private readonly stop = new AbortController();
-  private foundAddress: string | null;
+  private foundServers: FoundServer[] = [];
   private formProblem: PageModel['formProblem'] = null;
 
   constructor(
@@ -26,7 +27,10 @@ class Bridge implements BridgeActions {
     private readonly state: State,
   ) {
     this.seekquel = new SeekquelClient(config.seekquelApiUrl, fetch);
-    this.foundAddress = config.audiobookshelf.url;
+    this.foundServers = [
+      { type: serverType('audiobookshelf'), url: config.audiobookshelf.url },
+      { type: serverType('storyteller'), url: config.storyteller.url },
+    ].flatMap((server) => (server.url === null ? [] : [{ type: server.type, url: server.url }]));
   }
 
   async run(): Promise<void> {
@@ -44,9 +48,9 @@ class Bridge implements BridgeActions {
 
     log(`${APP_NAME} ${APP_VERSION} started. Open the page on port ${this.config.statusPort}.`);
 
-    if (this.foundAddress === null) {
-      void findServer(fetch, USUAL_ADDRESSES).then((address) => {
-        this.foundAddress ??= address;
+    if (this.foundServers.length === 0) {
+      void findServers(fetch).then((servers) => {
+        this.foundServers = servers;
       });
     }
 
@@ -74,7 +78,8 @@ class Bridge implements BridgeActions {
 
     return {
       now,
-      foundAddress: this.foundAddress,
+      foundServers: this.foundServers.map((server) => ({ name: server.type.name, url: server.url })),
+      update: newestUpdate([...this.runners.values()].map((runner) => runner.latestVersion)),
       formProblem,
       waitingBooksLink: `${this.config.seekquelAppUrl}${WAITING_BOOKS_PATH}`,
       listeners: [...this.runners.values()].map((runner) => this.view(runner, now)),
@@ -97,13 +102,15 @@ class Bridge implements BridgeActions {
     const address = normalizeAddress(answer.address);
 
     try {
-      if (address === null || !(await isAudiobookshelf(fetch, address))) {
-        this.formProblem = { address: answer.address, message: 'No Audiobookshelf answered at that address.' };
+      const type = address === null ? null : await detectServer(fetch, address);
+
+      if (address === null || type === null) {
+        this.formProblem = { address: answer.address, message: 'No server this version knows answered at that address.' };
 
         return;
       }
 
-      const signedIn = await signIn(fetch, address, answer.username, answer.password);
+      const signedIn = await type.signIn(fetch, address, answer.username, answer.password);
       const existing = this.state.listeners.find(
         (listener) => listener.source.url === address && listener.name === signedIn.name,
       );
@@ -122,11 +129,11 @@ class Bridge implements BridgeActions {
 
       await this.store.save(this.state);
       this.formProblem = null;
-      log(`${signedIn.name ?? 'A listener'} signed in to Audiobookshelf.`);
+      log(`${signedIn.name ?? 'A listener'} signed in to ${type.name}.`);
     } catch (error) {
       this.formProblem = {
         address: answer.address,
-        message: error instanceof SignInRefusedError ? error.message : 'Audiobookshelf could not be reached. Try again.',
+        message: error instanceof SignInRefusedError ? error.message : 'The server could not be reached. Try again.',
       };
     }
   }
@@ -153,7 +160,7 @@ class Bridge implements BridgeActions {
       return;
     }
 
-    this.state.listeners.push(newListener({ url, token, refreshToken: null }, null));
+    this.state.listeners.push(newListener({ kind: 'audiobookshelf', url, token, refreshToken: null }, null));
     await this.store.save(this.state);
   }
 
@@ -187,6 +194,10 @@ class Bridge implements BridgeActions {
         .map(([document, entry]) => bookView(document, entry, today)),
     };
   }
+}
+
+function newestUpdate(versions: readonly (string | null)[]): string | null {
+  return versions.reduce<string | null>((newest, version) => (isNewer(version, newest ?? APP_VERSION) ? version : newest), null);
 }
 
 function bookView(document: string, entry: BookState, today: string): BookView {
